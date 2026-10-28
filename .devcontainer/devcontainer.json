@@ -1,0 +1,40 @@
+{
+  "name": "ai-pr-reviewer",
+  "build": {
+    "context": ".",
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22",
+      "pnpmVersion": "10"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "mounts": [
+    "source=ai-pr-reviewer-claude-config,target=/home/vscode/.claude,type=volume",
+    "source=ai-pr-reviewer-gh-config,target=/home/vscode/.config/gh,type=volume"
+  ],
+  "containerEnv": {
+    "npm_config_store_dir": "/home/vscode/.local/share/pnpm/store"
+  },
+  "remoteUser": "vscode",
+  "remoteEnv": {
+    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+  },
+  "forwardPorts": [4800],
+  "portsAttributes": {
+    "4800": {
+      "label": "AI PR Reviewer"
+    }
+  },
+  "postCreateCommand": "pnpm install --frozen-lockfile",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "GitHub.vscode-pull-request-github"
+      ]
+    }
+  }
+}
