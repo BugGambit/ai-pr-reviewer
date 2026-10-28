@@ -1,0 +1,10 @@
+node_modules/
+.next/
+data/
+!data/.gitkeep
+public/screenshots/
+*.log
+.DS_Store
+.env*
+next-env.d.ts
+tsconfig.tsbuildinfo

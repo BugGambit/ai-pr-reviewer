@@ -1,0 +1,50 @@
+{
+  "name": "ai-pr-reviewer",
+  "version": "1.0.0",
+  "description": "A local, AI-assisted risk-review cockpit for GitHub pull requests, powered by the gh and claude CLIs.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev -p 4800",
+    "build": "next build",
+    "start": "next start -p 4800",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "setup:screenshots": "playwright install chromium",
+    "screenshots:readme": "node scripts/readme-screenshots/shoot.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "date-fns": "^4.1.0",
+    "hast-util-sanitize": "^5.0.2",
+    "mermaid": "^11.6.0",
+    "minimatch": "^10.0.1",
+    "next": "15.5.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-parse": "^9.0.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "swr": "^2.3.3",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.11",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/hast": "^3.0.5",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "playwright": "^1.53.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.8.3"
+  }
+}
