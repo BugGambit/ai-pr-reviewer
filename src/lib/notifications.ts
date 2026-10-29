@@ -49,7 +49,8 @@ export function takeBrowserAlerts(): AppNotification[] {
 /**
  * Browser notifications open the PR when clicked. osascript ones can't carry
  * a click action at all — macOS attributes them to Script Editor and opens
- * that instead — so they're only the fallback for when no tab is open.
+ * that instead — so terminal-notifier is preferred when no tab is open, with
+ * osascript as the last resort.
  */
 function announce(created: AppNotification[]): void {
   const browserActive = Date.now() - Number(kvGet(BROWSER_SEEN_KEY) ?? 0) < BROWSER_FRESH_MS;
@@ -59,14 +60,28 @@ function announce(created: AppNotification[]): void {
     return;
   }
   if (created.length <= 3) {
-    for (const n of created) desktopNotify(n.title, n.body);
+    for (const n of created) {
+      const local = n.owner && n.repo && n.number ? `/pr/${n.owner}/${n.repo}/${n.number}` : null;
+      desktopNotify(n.title, n.body, local ? `http://localhost:4800${local}` : n.url);
+    }
   } else {
-    desktopNotify("PR Reviewer", `${created.length} new items need your attention`);
+    desktopNotify("PR Reviewer", `${created.length} new items need your attention`, "http://localhost:4800");
   }
 }
 
-function desktopNotify(title: string, body: string): void {
+function desktopNotify(title: string, body: string, openUrl: string): void {
   if (process.platform !== "darwin") return;
+  // terminal-notifier (brew install terminal-notifier) can open a URL on click.
+  execFile(
+    "terminal-notifier",
+    ["-title", title, "-message", body.slice(0, 200), "-open", openUrl, "-sound", "Ping", "-group", "pr-reviewer"],
+    (err) => {
+      if (err) osascriptNotify(title, body);
+    },
+  );
+}
+
+function osascriptNotify(title: string, body: string): void {
   const escape = (s: string) => s.replace(/["\\]/g, "\\$&").slice(0, 200);
   execFile(
     "osascript",
@@ -256,6 +271,9 @@ async function pollGithubNotifications(
       const detail = await describeReviewRequest(notification.prId ?? "", myTeams, viewer);
 
       if (detail.mutedTeam && config.notifications.mutedTeams.includes(detail.mutedTeam)) continue;
+      // The ask is already gone (team request dropped, or the PR closed), so
+      // there is nothing to act on. If it comes back the thread updates again.
+      if (detail.resolved) continue;
       const personal = detail.via === "requested directly";
       if (!personal && !wanted(prIdValue)) continue;
 

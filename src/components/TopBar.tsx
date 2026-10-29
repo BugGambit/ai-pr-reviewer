@@ -125,9 +125,9 @@ function NotificationBell() {
   const markAllRead = async () => {
     setBusy("read");
     try {
-      const result = await postJson<{ marked: number }>("/api/notifications", { action: "markRead" });
+      await postJson("/api/notifications", { action: "markRead" });
       await mutate();
-      announce(result.marked > 0 ? `Marked ${result.marked} as read` : "Already all read");
+      announce("Cleared");
     } catch (err) {
       announce(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -215,8 +215,8 @@ function NotificationBell() {
                 type="button"
                 className="btn btn-sm"
                 onClick={markAllRead}
-                disabled={busy !== null || unread === 0}
-                title={unread === 0 ? "Nothing unread" : `Mark ${unread} as read`}
+                disabled={busy !== null || items.length === 0}
+                title={items.length === 0 ? "Nothing to clear" : `Clear ${items.length}`}
               >
                 {busy === "read" ? <Spinner /> : null}
                 Mark all read
@@ -226,7 +226,7 @@ function NotificationBell() {
 
           {items.length === 0 ? (
             <div className="muted" style={{ padding: 22, textAlign: "center", fontSize: 13 }}>
-              Nothing yet. New PRs matching your filters, mentions and replies land here.
+              All clear. New PRs matching your filters, mentions and replies land here.
             </div>
           ) : (
             items.map((item) => {

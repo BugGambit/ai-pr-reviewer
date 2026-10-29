@@ -170,6 +170,18 @@ export function PrRow({
         )}
         <CiDot pr={pr} />
 
+        <a
+          href={pr.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-sm"
+          aria-label="Open on GitHub"
+          title="Open on GitHub"
+          style={{ padding: "3px 7px" }}
+        >
+          ↗
+        </a>
+
         <div ref={menuRef} style={{ position: "relative" }}>
           <button
             type="button"

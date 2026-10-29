@@ -76,6 +76,18 @@ export function buildStacks(prs: PrSummary[]): void {
     return total;
   };
 
+  // The bottom PR (or the branch it targets, when that PR isn't in view) names
+  // the stack, so every PR above it lands in the same group.
+  const groupOf = new Map<string, string>();
+  for (const pr of prs) {
+    const chain = ancestors(pr);
+    const bottom = chain[chain.length - 1] ?? pr;
+    const unknown = unknownBase.get(bottom.id);
+    groupOf.set(pr.id, unknown ? branchKey(bottom, unknown) : bottom.id);
+  }
+  const groupSizes = new Map<string, number>();
+  for (const id of groupOf.values()) groupSizes.set(id, (groupSizes.get(id) ?? 0) + 1);
+
   for (const pr of prs) {
     const chain = ancestors(pr);
     const parent = parentOf.get(pr.id) ?? null;
@@ -90,6 +102,8 @@ export function buildStacks(prs: PrSummary[]): void {
 
     const info: StackInfo = {
       size: chain.length + 1 + descendantCount(pr.id),
+      groupId: groupOf.get(pr.id)!,
+      groupSize: groupSizes.get(groupOf.get(pr.id)!) ?? 1,
       position: chain.length + 1,
       parentId: parent?.id ?? null,
       childIds: children,
