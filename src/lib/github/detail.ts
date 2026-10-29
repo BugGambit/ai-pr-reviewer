@@ -1,5 +1,5 @@
 import { gh, ghGraphQl, getViewer, prId } from "../gh";
-import { cachePr, readCachedPr } from "../db";
+import { cachePr, readCachedPr, saveDiffSnapshot } from "../db";
 import type { AppConfig, PrDetail } from "../types";
 import { PR_CHECKS, PR_DETAIL } from "./queries";
 import { normalizeChecks, normalizePrSummary, type RawPrNode, type RawRollup } from "./normalize";
@@ -44,6 +44,7 @@ interface RawDetail extends Omit<RawPrNode, "commits" | "files"> {
       submittedAt: string | null;
       url: string;
       author: { login: string; avatarUrl: string | null } | null;
+      commit: { oid: string } | null;
     }[];
   };
   reviewThreads: {
@@ -94,7 +95,35 @@ export async function fetchDiff(
     const message = err instanceof Error ? err.message : String(err);
     return { diff: `(diff unavailable: ${message})`, truncated: false, bytes: 0 };
   }
+  return truncateDiff(diff, maxBytes);
+}
 
+/**
+ * The net diff of an older head commit against the base branch, for PR
+ * versions we never snapshotted. GitHub keeps force-pushed-away commits
+ * reachable for a while, but not forever, hence the null.
+ */
+export async function fetchDiffAt(
+  owner: string,
+  repo: string,
+  baseRef: string,
+  sha: string,
+  maxBytes: number,
+): Promise<{ diff: string; truncated: boolean } | null> {
+  try {
+    const diff = await gh([
+      "api",
+      `repos/${owner}/${repo}/compare/${encodeURIComponent(baseRef)}...${sha}`,
+      "-H",
+      "Accept: application/vnd.github.v3.diff",
+    ]);
+    return truncateDiff(diff, maxBytes);
+  } catch {
+    return null;
+  }
+}
+
+function truncateDiff(diff: string, maxBytes: number): { diff: string; truncated: boolean; bytes: number } {
   const bytes = Buffer.byteLength(diff, "utf8");
   if (bytes <= maxBytes) return { diff, truncated: false, bytes };
 
@@ -227,6 +256,7 @@ export async function fetchPrDetail(
         bodyHtml: r.bodyHTML ?? "",
         submittedAt: r.submittedAt,
         url: r.url,
+        commitOid: r.commit?.oid ?? null,
       })),
     reviewThreads: node.reviewThreads.nodes.map((t) => ({
       id: t.id,
@@ -252,5 +282,8 @@ export async function fetchPrDetail(
   };
 
   cachePr(id, detail.headSha, detail);
+  if (!opts.skipDiff && !diffResult.diff.startsWith("(diff unavailable")) {
+    saveDiffSnapshot(id, detail.headSha, diffResult.diff, diffResult.truncated);
+  }
   return detail;
 }

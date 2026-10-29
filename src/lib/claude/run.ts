@@ -239,15 +239,112 @@ function cursorArgs(model: string, checkoutPath: string | undefined, scratch: st
 }
 
 /** Cursor has no --system-prompt or --json-schema, so both travel in the prompt. */
-function cursorPrompt(prompt: string): string {
+function cursorPrompt(prompt: string, systemPrompt = SYSTEM_PROMPT, schema: object = REVIEW_SCHEMA): string {
   return [
-    SYSTEM_PROMPT,
+    systemPrompt,
     "",
     "OUTPUT FORMAT: reply with a single JSON object that conforms to the JSON Schema below. No prose before or after it, no markdown code fences.",
-    JSON.stringify(REVIEW_SCHEMA),
+    JSON.stringify(schema),
     "",
     prompt,
   ].join("\n");
+}
+
+function claudeArgs(
+  model: string,
+  effort: AppConfig["review"]["effort"],
+  maxBudgetUsd: number,
+  systemPrompt: string,
+  schema: object,
+): string[] {
+  return [
+    "-p",
+    // Streaming so the UI can show the verdict and headline while the rest of
+    // the document is still being written.
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--verbose",
+    "--json-schema",
+    JSON.stringify(schema),
+    "--system-prompt",
+    systemPrompt,
+    "--model",
+    model,
+    "--effort",
+    effort,
+    "--max-budget-usd",
+    String(maxBudgetUsd),
+    // Isolation: no MCP servers, no user/project settings, no slash commands.
+    "--strict-mcp-config",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--permission-prompts",
+    "none",
+    "--restricted",
+  ];
+}
+
+/**
+ * Re-parsing the whole buffer on every token would burn CPU for no benefit;
+ * the reader cannot perceive faster than a few updates a second.
+ */
+function throttledPartial<T>(onPartial?: (partial: Partial<T>) => void): (text: string) => void {
+  let lastEmit = 0;
+  return (text) => {
+    if (!onPartial) return;
+    const now = Date.now();
+    if (now - lastEmit < 400) return;
+    lastEmit = now;
+    const partial = parsePartialJson<T>(text);
+    if (partial) onPartial(partial);
+  };
+}
+
+/**
+ * One tool-less, schema-constrained model run on whichever CLI is configured.
+ * Used for smaller jobs than the full review, which share its isolation.
+ */
+export async function runStructured<T>(opts: {
+  config: AppConfig;
+  systemPrompt: string;
+  schema: object;
+  prompt: string;
+  timeoutMs?: number;
+  onPartial?: (partial: Partial<T>) => void;
+}): Promise<{ value: unknown; costUsd: number | null }> {
+  const { config } = opts;
+  const provider = resolveProvider(config);
+  const model = modelFor(config);
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pr-followup-"));
+  try {
+    const args =
+      provider === "cursor"
+        ? cursorArgs(model, undefined, scratch)
+        : [
+            ...claudeArgs(model, config.review.effort, config.review.maxBudgetUsd, opts.systemPrompt, opts.schema),
+            "--tools",
+            "",
+          ];
+    const input = provider === "cursor" ? cursorPrompt(opts.prompt, opts.systemPrompt, opts.schema) : opts.prompt;
+    const { text, costUsd } = await runStreaming(
+      provider,
+      args,
+      input,
+      scratch,
+      opts.timeoutMs ?? 5 * 60_000,
+      throttledPartial<T>(opts.onPartial),
+    );
+    return { value: extractJson(text), costUsd };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+export function modelFor(config: AppConfig): string {
+  return resolveProvider(config) === "cursor" ? config.review.cursorModel : config.review.model;
 }
 
 const VERDICTS = new Set(["approve", "needs_attention", "block"]);
@@ -374,7 +471,7 @@ export async function runReview(
   const id = prId(pr.owner, pr.repo, pr.number);
   const mode = opts.mode ?? config.review.mode;
   const provider = resolveProvider(config);
-  const model = opts.model ?? (provider === "cursor" ? config.review.cursorModel : config.review.model);
+  const model = opts.model ?? modelFor(config);
   const effort = opts.effort ?? config.review.effort;
   const log = opts.onLog ?? (() => {});
   const startedAt = Date.now();
@@ -410,34 +507,10 @@ export async function runReview(
     const { prompt } = buildReviewPrompt({ pr, heuristics, deepMode: mode === "deep", checkoutPath });
     log(`Prompt built (${Math.round(prompt.length / 1024)} KB). Invoking ${PROVIDER_LABEL[provider]} (${model})…`);
 
-    const args = provider === "cursor" ? cursorArgs(model, mode === "deep" ? checkoutPath : undefined, scratch) : [
-      "-p",
-      // Streaming so the UI can show the verdict and headline while the rest of
-      // the document is still being written.
-      "--output-format",
-      "stream-json",
-      "--include-partial-messages",
-      "--verbose",
-      "--json-schema",
-      JSON.stringify(REVIEW_SCHEMA),
-      "--system-prompt",
-      SYSTEM_PROMPT,
-      "--model",
-      model,
-      "--effort",
-      effort,
-      "--max-budget-usd",
-      String(config.review.maxBudgetUsd),
-      // Isolation: no MCP servers, no user/project settings, no slash commands.
-      "--strict-mcp-config",
-      "--setting-sources",
-      "",
-      "--disable-slash-commands",
-      "--no-session-persistence",
-      "--permission-prompts",
-      "none",
-      "--restricted",
-    ];
+    const args =
+      provider === "cursor"
+        ? cursorArgs(model, mode === "deep" ? checkoutPath : undefined, scratch)
+        : claudeArgs(model, effort, config.review.maxBudgetUsd, SYSTEM_PROMPT, REVIEW_SCHEMA);
 
     if (provider === "claude") {
       if (mode === "deep" && checkoutPath) {
@@ -450,26 +523,17 @@ export async function runReview(
 
     const timeoutMs = mode === "deep" ? 15 * 60_000 : 8 * 60_000;
 
-    // Re-parsing the whole buffer on every token would burn CPU for no benefit;
-    // the reader cannot perceive faster than a few updates a second.
-    let lastEmit = 0;
-    let firstSignalAt: number | null = null;
-
-    const input = provider === "cursor" ? cursorPrompt(prompt) : prompt;
-    const { text, costUsd } = await runStreaming(provider, args, input, scratch, timeoutMs, (partialText) => {
-      const now = Date.now();
-      if (now - lastEmit < 400) return;
-      lastEmit = now;
-
-      const partial = parsePartialJson<ReviewResult>(partialText);
-      if (!partial) return;
-
-      if (!firstSignalAt && partial.verdict) {
-        firstSignalAt = now;
-        log(`First verdict available after ${Math.round((now - startedAt) / 1000)}s`);
+    let firstSignalLogged = false;
+    const onPartial = throttledPartial<ReviewResult>((partial) => {
+      if (!firstSignalLogged && partial.verdict) {
+        firstSignalLogged = true;
+        log(`First verdict available after ${Math.round((Date.now() - startedAt) / 1000)}s`);
       }
       opts.onPartial?.(partial);
     });
+
+    const input = provider === "cursor" ? cursorPrompt(prompt) : prompt;
+    const { text, costUsd } = await runStreaming(provider, args, input, scratch, timeoutMs, onPartial);
 
     const parsed = coerceResult(extractJson(text));
     const result = enforceFloor(parsed, pr, heuristics.injectionSuspects.length);

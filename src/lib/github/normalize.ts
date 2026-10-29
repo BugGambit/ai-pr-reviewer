@@ -40,7 +40,7 @@ export interface RawPrNode {
   reviewRequests: {
     nodes: { requestedReviewer: { __typename: string; login?: string; slug?: string } | null }[];
   };
-  latestReviews: { nodes: { state: string; author: { login: string } | null }[] };
+  latestReviews: { nodes: { state: string; author: { login: string } | null; commit?: { oid: string } | null }[] };
   files?: { nodes: { path: string }[]; pageInfo: { hasNextPage: boolean } };
   commits: { nodes: { commit: { oid: string; statusCheckRollup: RawRollup | null } }[] };
 }
@@ -129,9 +129,10 @@ export function normalizePrSummary(node: RawPrNode, viewer: string): PrSummary {
     else if (r.login) requestedReviewers.push(r.login);
   }
 
-  const viewerHasApproved = (node.latestReviews?.nodes ?? []).some(
+  const viewerApproval = (node.latestReviews?.nodes ?? []).find(
     (r) => r?.author?.login === viewer && r.state === "APPROVED",
   );
+  const viewerHasApproved = Boolean(viewerApproval);
 
   return {
     id: `${owner}/${repo}#${node.number}`,
@@ -165,6 +166,7 @@ export function normalizePrSummary(node: RawPrNode, viewer: string): PrSummary {
     requestedReviewers,
     assignees: node.assignees?.nodes?.map((a) => a.login) ?? [],
     viewerHasApproved,
+    viewerApprovedSha: viewerApproval?.commit?.oid ?? null,
     matchedFilters: [],
   };
 }

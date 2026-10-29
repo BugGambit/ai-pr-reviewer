@@ -123,6 +123,19 @@ Each step runs independently and reports its own result, so a missing label neve
 approval itself. You can also request changes with inline comments and ` ```suggestion ` blocks,
 straight from the diff view: **double-click any line** to comment.
 
+### What changed since you approved
+
+After an approval, authors rebase, resolve conflicts and fix CI, often by force-pushing. The PR
+page shows **what changed since your approval** (or your last review, or, on your own PRs, the
+last approval by someone else) and the queue flags those PRs with **Δ since approval**, moving
+them back into *Needs you*.
+
+The comparison is between the PR's *net diff* then and now, not its commits, so it works the same
+with `jj`, squashes and force-pushes. A pure rebase shows up as "no author changes". Lines that
+left the PR because a stacked PR underneath was merged are credited to the base branch rather than
+to the author. What's left goes to a short follow-up review that says whether the earlier verdict
+still holds.
+
 ### Notifications that explain themselves
 
 A bell in the header, plus optional desktop notifications that open the PR when clicked, for:

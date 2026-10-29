@@ -15,7 +15,7 @@ function sanitize(text: string, nonce: string): string {
     .replaceAll(nonce, "[redacted-delimiter]");
 }
 
-function block(nonce: string, label: string, body: string): string {
+export function block(nonce: string, label: string, body: string): string {
   return [
     `<<<${nonce}:BEGIN ${label}>>>`,
     sanitize(body, nonce) || "(empty)",
