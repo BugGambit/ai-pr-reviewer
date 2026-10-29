@@ -60,6 +60,8 @@ export interface PrSummary {
   requestedReviewers: string[];
   assignees: string[];
   viewerHasApproved: boolean;
+  /** Head commit your still-standing approval was given on. */
+  viewerApprovedSha?: string | null;
   /** Which configured filters matched this PR. */
   matchedFilters: string[];
   /** Cached review verdict, if one exists for this head SHA. */
@@ -126,6 +128,8 @@ export interface PrReview {
   bodyHtml: string;
   submittedAt: string | null;
   url: string;
+  /** Head commit the review was submitted on. */
+  commitOid?: string | null;
 }
 
 export interface PrCommit {
@@ -250,6 +254,100 @@ export interface StoredReview {
   updatedAt: number;
   /** Deterministic signals computed without the model. */
   heuristics: HeuristicReport | null;
+}
+
+// ------------------------- Follow-up (since last look) ---------------------
+
+export type FollowupChangeKind =
+  | "rebase_conflict"
+  | "ci_fix"
+  | "review_feedback"
+  | "new_behaviour"
+  | "refactor"
+  | "revert"
+  | "other";
+
+export interface FollowupResult {
+  verdict: Verdict;
+  riskScore: number;
+  oneLiner: string;
+  /** False when the delta undermines the earlier verdict or its findings. */
+  previousReviewStillHolds: boolean;
+  changes: { kind: FollowupChangeKind; file: string; description: string }[];
+  concerns: ReviewFinding[];
+  promptInjection: { detected: boolean; detail: string };
+}
+
+export interface StoredFollowup {
+  id: number;
+  prId: string;
+  fromSha: string;
+  toSha: string;
+  status: "running" | "done" | "error";
+  result: FollowupResult | null;
+  error: string | null;
+  model: string | null;
+  costUsd: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface InterdiffLine {
+  type: "add" | "del" | "ctx";
+  content: string;
+  newLine: number | null;
+  oldLine: number | null;
+  /** True when this change line was not part of the PR at the baseline. */
+  novel: boolean;
+}
+
+export interface InterdiffFile {
+  path: string;
+  /** "new" = file entered the PR, "dropped" = no longer touched by the PR. */
+  status: "new" | "dropped" | "changed";
+  novelLines: number;
+  revertedLines: number;
+  /** Current hunks that contain at least one novel line. */
+  hunks: { header: string; lines: InterdiffLine[] }[];
+  /** Change lines (with +/- prefix) that were in the PR at the baseline but are gone now. */
+  reverted: string[];
+  /**
+   * Baseline change lines that left the PR because the base branch now has
+   * them, typically a stacked PR below this one being squash-merged.
+   */
+  landedLines: number;
+}
+
+export interface Interdiff {
+  fromSha: string;
+  toSha: string;
+  /** True when the PR's net change is the same, i.e. a pure rebase or squash. */
+  identical: boolean;
+  files: InterdiffFile[];
+  unchangedFiles: number;
+  /** Files that left the PR entirely because the base branch caught up with them. */
+  landedFiles: string[];
+  /** Either side was truncated, so the comparison may be incomplete. */
+  partial: boolean;
+}
+
+export interface SinceBaseline {
+  /**
+   * "approval" = your approval, "review" = your last AI review,
+   * "other-approval" = someone else's approval (e.g. on your own PR).
+   */
+  kind: "approval" | "review" | "other-approval";
+  sha: string;
+  at: number | null;
+  by: string | null;
+}
+
+export interface SinceInfo {
+  baseline: SinceBaseline | null;
+  /** Why no comparison could be made, when baseline is set but interdiff isn't. */
+  unavailable: string | null;
+  interdiff: Interdiff | null;
+  followup: StoredFollowup | null;
 }
 
 // ------------------------------ Heuristics ---------------------------------
@@ -435,4 +533,6 @@ export interface JobState {
   error: string | null;
   /** The review as far as the model has written it, while still streaming. */
   partial?: Partial<ReviewResult> | null;
+  /** The follow-up review as far as the model has written it. */
+  followupPartial?: Partial<FollowupResult> | null;
 }

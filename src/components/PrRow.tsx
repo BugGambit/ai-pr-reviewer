@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { isApprovalStale } from "@/lib/attention";
 import { prPath, relativeTime } from "@/lib/client";
 import { DiffStat } from "@/components/charts";
 import { LabelChip, VERDICT_META } from "@/components/ui";
@@ -152,6 +153,16 @@ export function PrRow({
         {pr.triage ? (
           <span className="chip" style={{ color: "var(--series-7)", borderColor: "var(--series-7)" }}>
             {pr.triage.status}
+          </span>
+        ) : null}
+        {isApprovalStale(pr) ? (
+          <span
+            className="chip"
+            title={`New commits since your approval at ${pr.viewerApprovedSha?.slice(0, 8)}. Open to see what changed.`}
+            style={{ color: "var(--status-warning)", borderColor: "var(--status-warning)" }}
+          >
+            <span aria-hidden>Δ</span>
+            since approval
           </span>
         ) : null}
         {verdict ? (

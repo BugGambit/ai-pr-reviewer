@@ -1,4 +1,4 @@
-import type { JobState, ReviewResult } from "./types";
+import type { FollowupResult, JobState, ReviewResult } from "./types";
 
 /**
  * In-process job registry. Reviews and screenshot captures outlive a single
@@ -47,6 +47,12 @@ export function setPartial(id: string, partial: Partial<ReviewResult>): void {
   const job = jobs.get(id);
   if (!job) return;
   job.partial = partial;
+}
+
+export function setFollowupPartial(id: string, partial: Partial<FollowupResult>): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.followupPartial = partial;
 }
 
 export function finishJob(id: string, error?: string): void {

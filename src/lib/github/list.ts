@@ -1,7 +1,7 @@
 import { minimatch } from "minimatch";
 import { getViewer, ghGraphQl } from "../gh";
 import { expireSnoozes, getReviewVerdicts, listPrStates } from "../db";
-import { isHidden, scoreAttention } from "../attention";
+import { isApprovalStale, isHidden, scoreAttention } from "../attention";
 import { buildStacks } from "../stacks";
 import type { AppConfig, PrFilter, PrSummary } from "../types";
 import { searchPrsQuery } from "./queries";
@@ -222,7 +222,7 @@ export function applyListPreferences(prs: PrSummary[], config: AppConfig): PrSum
       return false;
     }
     if (config.list.hideDrafts && pr.isDraft) return false;
-    if (config.list.hideApprovedByMe && pr.viewerHasApproved) return false;
+    if (config.list.hideApprovedByMe && pr.viewerHasApproved && !isApprovalStale(pr)) return false;
     return true;
   });
 }

@@ -18,6 +18,56 @@ const finding = {
   },
 } as const;
 
+/** Schema for the follow-up review of what changed since a baseline. Verdict first, so it streams first. */
+export const FOLLOWUP_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "verdict",
+    "riskScore",
+    "oneLiner",
+    "previousReviewStillHolds",
+    "changes",
+    "concerns",
+    "promptInjection",
+  ],
+  properties: {
+    verdict: { type: "string", enum: ["approve", "needs_attention", "block"] },
+    riskScore: { type: "integer", minimum: 0, maximum: 100, description: "Risk of the delta alone." },
+    oneLiner: {
+      type: "string",
+      description: "What changed since the baseline, in one sentence. Say plainly if it is only rebase fallout.",
+    },
+    previousReviewStillHolds: {
+      type: "boolean",
+      description: "True when the earlier approval/verdict can stand given only these changes.",
+    },
+    changes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "file", "description"],
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["rebase_conflict", "ci_fix", "review_feedback", "new_behaviour", "refactor", "revert", "other"],
+          },
+          file: { type: "string" },
+          description: { type: "string", description: "One sentence: what changed in this file and why." },
+        },
+      },
+    },
+    concerns: { type: "array", items: finding },
+    promptInjection: {
+      type: "object",
+      additionalProperties: false,
+      required: ["detected", "detail"],
+      properties: { detected: { type: "boolean" }, detail: { type: "string" } },
+    },
+  },
+} as const;
+
 export const REVIEW_SCHEMA = {
   type: "object",
   additionalProperties: false,

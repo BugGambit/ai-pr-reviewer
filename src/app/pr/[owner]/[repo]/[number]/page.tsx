@@ -17,6 +17,7 @@ import {
 import { ChurnBars, DiffStat, FileKindBar } from "@/components/charts";
 import { GitHubBody } from "@/components/GitHubBody";
 import { ReviewPanel } from "@/components/pr/ReviewPanel";
+import { SincePanel } from "@/components/pr/SincePanel";
 import { ActionBar } from "@/components/pr/ActionBar";
 import { DiffViewer } from "@/components/pr/DiffViewer";
 import { ChecksList, CommitList, Conversation } from "@/components/pr/Conversation";
@@ -267,6 +268,8 @@ export default function PrDetailPage({
       {tab === "overview" ? (
         <>
           <StackView owner={owner} repo={repo} number={Number(number)} />
+
+          <SincePanel base={base} autoRun={Boolean(data.reviewConfig?.autoReviewOnOpen)} />
 
           {!review && data.staleReview ? (
             <div

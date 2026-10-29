@@ -1,10 +1,13 @@
+import { gunzipSync, gzipSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { DB_PATH, ensureDirs } from "./paths";
 import type {
   AppNotification,
+  FollowupResult,
   HeuristicReport,
   ReviewResult,
   ScreenshotRecord,
+  StoredFollowup,
   StoredReview,
 } from "./types";
 
@@ -107,6 +110,33 @@ function migrate(d: Database.Database): void {
       note        TEXT,
       created_at  INTEGER NOT NULL
     );
+
+    -- The PR's net diff (base...head) as seen at each head SHA. Comparing these
+    -- instead of commit history keeps "what changed since I looked" working
+    -- across rebases, squashes and force-pushes.
+    CREATE TABLE IF NOT EXISTS diff_snapshots (
+      pr_id      TEXT NOT NULL,
+      head_sha   TEXT NOT NULL,
+      diff       BLOB NOT NULL,
+      truncated  INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (pr_id, head_sha)
+    );
+
+    CREATE TABLE IF NOT EXISTS followups (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      pr_id       TEXT NOT NULL,
+      from_sha    TEXT NOT NULL,
+      to_sha      TEXT NOT NULL,
+      status      TEXT NOT NULL,
+      result      TEXT,
+      error       TEXT,
+      model       TEXT,
+      cost_usd    REAL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_followups_pr ON followups (pr_id, from_sha, to_sha, id DESC);
   `);
 
   addColumnIfMissing(d, "notifications", "via", "via TEXT");
@@ -277,6 +307,12 @@ export function reapStaleReviews(maxAgeMs = 30 * 60_000): void {
   getDb()
     .prepare(
       `UPDATE reviews SET status = 'error', error = 'Review did not finish (server restarted or timed out)',
+       updated_at = ? WHERE status = 'running' AND created_at < ?`,
+    )
+    .run(Date.now(), Date.now() - maxAgeMs);
+  getDb()
+    .prepare(
+      `UPDATE followups SET status = 'error', error = 'Follow-up did not finish (server restarted or timed out)',
        updated_at = ? WHERE status = 'running' AND created_at < ?`,
     )
     .run(Date.now(), Date.now() - maxAgeMs);
@@ -567,6 +603,110 @@ export function expireSnoozes(): number {
     .prepare("DELETE FROM pr_state WHERE status = 'snoozed' AND until IS NOT NULL AND until < ?")
     .run(Date.now());
   return info.changes;
+}
+
+// ----------------------------- diff snapshots ------------------------------
+
+const SNAPSHOTS_PER_PR = 10;
+
+export function saveDiffSnapshot(prIdValue: string, headSha: string, diff: string, truncated: boolean): void {
+  if (!headSha || !diff) return;
+  const d = getDb();
+  d.prepare(
+    `INSERT INTO diff_snapshots (pr_id, head_sha, diff, truncated, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(pr_id, head_sha) DO NOTHING`,
+  ).run(prIdValue, headSha, gzipSync(diff), truncated ? 1 : 0, Date.now());
+  d.prepare(
+    `DELETE FROM diff_snapshots WHERE pr_id = ? AND head_sha NOT IN (
+       SELECT head_sha FROM diff_snapshots WHERE pr_id = ? ORDER BY created_at DESC LIMIT ?
+     )`,
+  ).run(prIdValue, prIdValue, SNAPSHOTS_PER_PR);
+}
+
+export function getDiffSnapshot(
+  prIdValue: string,
+  headSha: string,
+): { diff: string; truncated: boolean; createdAt: number } | null {
+  const row = getDb()
+    .prepare("SELECT diff, truncated, created_at FROM diff_snapshots WHERE pr_id = ? AND head_sha = ?")
+    .get(prIdValue, headSha) as { diff: Buffer; truncated: number; created_at: number } | undefined;
+  if (!row) return null;
+  return { diff: gunzipSync(row.diff).toString("utf8"), truncated: row.truncated === 1, createdAt: row.created_at };
+}
+
+/** Most recent finished review at a head SHA other than the current one. */
+export function getPreviousReview(prIdValue: string, currentHeadSha: string): StoredReview | null {
+  const row = getDb()
+    .prepare(
+      "SELECT * FROM reviews WHERE pr_id = ? AND head_sha != ? AND status = 'done' ORDER BY id DESC LIMIT 1",
+    )
+    .get(prIdValue, currentHeadSha) as ReviewRow | undefined;
+  return row ? toStoredReview(row) : null;
+}
+// ------------------------------- follow-ups --------------------------------
+
+interface FollowupRow {
+  id: number;
+  pr_id: string;
+  from_sha: string;
+  to_sha: string;
+  status: string;
+  result: string | null;
+  error: string | null;
+  model: string | null;
+  cost_usd: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+function toFollowup(row: FollowupRow): StoredFollowup {
+  return {
+    id: row.id,
+    prId: row.pr_id,
+    fromSha: row.from_sha,
+    toSha: row.to_sha,
+    status: row.status as StoredFollowup["status"],
+    result: parseJson<FollowupResult>(row.result),
+    error: row.error,
+    model: row.model,
+    costUsd: row.cost_usd,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getFollowup(prIdValue: string, fromSha: string, toSha: string): StoredFollowup | null {
+  const row = getDb()
+    .prepare("SELECT * FROM followups WHERE pr_id = ? AND from_sha = ? AND to_sha = ? ORDER BY id DESC LIMIT 1")
+    .get(prIdValue, fromSha, toSha) as FollowupRow | undefined;
+  return row ? toFollowup(row) : null;
+}
+
+export function createFollowup(prIdValue: string, fromSha: string, toSha: string, model: string): number {
+  const now = Date.now();
+  const info = getDb()
+    .prepare(
+      `INSERT INTO followups (pr_id, from_sha, to_sha, status, model, created_at, updated_at)
+       VALUES (?, ?, ?, 'running', ?, ?, ?)`,
+    )
+    .run(prIdValue, fromSha, toSha, model, now, now);
+  return Number(info.lastInsertRowid);
+}
+
+export function finishFollowup(
+  id: number,
+  patch: { status: "done" | "error"; result?: FollowupResult | null; error?: string | null; costUsd?: number | null },
+): void {
+  getDb()
+    .prepare("UPDATE followups SET status = ?, result = ?, error = ?, cost_usd = ?, updated_at = ? WHERE id = ?")
+    .run(
+      patch.status,
+      patch.result ? JSON.stringify(patch.result) : null,
+      patch.error ?? null,
+      patch.costUsd ?? null,
+      Date.now(),
+      id,
+    );
 }
 
 // ------------------------------- action log --------------------------------

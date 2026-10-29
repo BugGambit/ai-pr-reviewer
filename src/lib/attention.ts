@@ -12,6 +12,14 @@ export interface Attention {
 
 const DAY = 86_400_000;
 
+/**
+ * An approval on an older head is a quick re-check, not a finished job: the
+ * author may have rebased, fixed CI or changed behaviour since.
+ */
+export function isApprovalStale(pr: PrSummary): boolean {
+  return pr.viewerHasApproved && Boolean(pr.viewerApprovedSha) && pr.viewerApprovedSha !== pr.headSha;
+}
+
 function daysSince(iso: string): number {
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return 0;
@@ -41,8 +49,9 @@ export function scoreAttention(pr: PrSummary, state: PrState | null): Attention 
   // green CI leaves the section permanently empty.
   // Whether a snooze is *still in effect* is `isHidden`'s call, not this one —
   // deciding it here would keep lapsed snoozes hidden forever.
+  const approvalStale = isApprovalStale(pr);
   let bucket: Bucket;
-  if (pr.viewerHasApproved) {
+  if (pr.viewerHasApproved && !approvalStale) {
     bucket = "done";
   } else if (ciFailing || conflicted) {
     bucket = "blocked";
@@ -116,7 +125,12 @@ export function scoreAttention(pr: PrSummary, state: PrState | null): Attention 
   } else if (ciPending) {
     score -= 5;
   }
-  if (pr.viewerHasApproved) score -= 100;
+  if (approvalStale) {
+    score += 30;
+    reasons.unshift("changed since you approved");
+  } else if (pr.viewerHasApproved) {
+    score -= 100;
+  }
 
   return { score: Math.round(score), bucket, reasons: reasons.slice(0, 3) };
 }

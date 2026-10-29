@@ -73,7 +73,7 @@ query SearchPrs($q: String!, $first: Int!, $after: String) {
             }
           }
         }
-        latestReviews(first: 10) { nodes { state author { login } } }
+        latestReviews(first: 10) { nodes { state author { login } commit { oid } } }
         ${includeFiles ? "files(first: 100) { nodes { path } pageInfo { hasNextPage } }" : ""}
         commits(last: 1) {
           nodes {
@@ -132,7 +132,7 @@ query PrDetail($owner: String!, $repo: String!, $number: Int!) {
           }
         }
       }
-      latestReviews(first: 25) { nodes { state author { login } } }
+      latestReviews(first: 25) { nodes { state author { login } commit { oid } } }
       files(first: 100) {
         nodes { path additions deletions changeType }
         pageInfo { hasNextPage }
@@ -153,7 +153,7 @@ query PrDetail($owner: String!, $repo: String!, $number: Int!) {
         nodes { id body bodyHTML createdAt url author { login avatarUrl } }
       }
       reviews(last: 30) {
-        nodes { id body bodyHTML state submittedAt url author { login avatarUrl } }
+        nodes { id body bodyHTML state submittedAt url author { login avatarUrl } commit { oid } }
       }
       reviewThreads(first: 60) {
         nodes {
