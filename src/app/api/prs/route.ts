@@ -7,6 +7,29 @@ export const dynamic = "force-dynamic";
 
 const BUCKET_ORDER = ["ready", "blocked", "done", "snoozed"] as const;
 
+/**
+ * Pulls the members of each stack together, bottom PR first. A stack takes the
+ * slot of its best-ranked member, so one urgent PR doesn't get its siblings
+ * stranded further down.
+ */
+function clusterStacks(prs: PrSummary[]): PrSummary[] {
+  const out: PrSummary[] = [];
+  const placed = new Set<string>();
+  for (const pr of prs) {
+    const group = pr.stack?.groupId;
+    if (!group) {
+      out.push(pr);
+      continue;
+    }
+    if (placed.has(group)) continue;
+    placed.add(group);
+    const members = prs.filter((p) => p.stack?.groupId === group);
+    members.sort((a, b) => (a.stack?.position ?? 0) - (b.stack?.position ?? 0));
+    out.push(...members);
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   return handle(async () => {
     const url = new URL(request.url);
@@ -26,6 +49,8 @@ export async function GET(request: Request) {
       const bucket = pr.attention?.bucket ?? "ready";
       (groups[bucket] ?? groups.ready).push(pr);
     }
+
+    for (const bucket of BUCKET_ORDER) groups[bucket] = clusterStacks(groups[bucket]);
 
     return {
       groups,

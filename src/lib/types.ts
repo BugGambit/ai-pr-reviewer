@@ -74,6 +74,10 @@ export interface PrSummary {
 export interface StackInfo {
   /** How many PRs in this chain we can see. */
   size: number;
+  /** Shared by every PR in the same stack, so the list can group them. */
+  groupId: string;
+  /** Every PR we can see in the stack, including branches off the chain. */
+  groupSize: number;
   /** 1-based position counting from the bottom of the stack. */
   position: number;
   parentId: string | null;

@@ -109,17 +109,18 @@ export function ActionBar({
           >
             <span aria-hidden>✓</span> You approved this PR
           </span>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-approve"
-            disabled={busy}
-            onClick={() => setMode(mode === "approve" ? "none" : "approve")}
-          >
-            {busy && mode === "approve" ? <Spinner /> : <span aria-hidden>✓</span>}
-            Risk-approve
-          </button>
-        )}
+        ) : null}
+        {/* An approval can stop counting (new commits, stricter policy-bot rules),
+            so approving again has to stay possible. */}
+        <button
+          type="button"
+          className="btn btn-approve"
+          disabled={busy}
+          onClick={() => setMode(mode === "approve" ? "none" : "approve")}
+        >
+          {busy && mode === "approve" ? <Spinner /> : <span aria-hidden>✓</span>}
+          {pr.viewerHasApproved ? "Re-approve" : "Risk-approve"}
+        </button>
         <button
           type="button"
           className="btn btn-danger"

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { apiPrPath, fetcher, postJson, prPath } from "@/lib/client";
 import { Empty, ErrorBox, Spinner } from "@/components/ui";
@@ -399,16 +399,29 @@ export default function InboxPage() {
               {section.prs.length === 0 ? (
                 <Empty>Nothing here.</Empty>
               ) : (
-                section.prs.map((pr) => (
-                  <PrRow
-                    key={pr.id}
-                    pr={pr}
-                    selected={visible[cursor]?.id === pr.id}
-                    onSelect={() => setCursor(visible.findIndex((p) => p.id === pr.id))}
-                    onTriage={triage}
-                    busy={busyId === pr.id}
-                  />
-                ))
+                section.prs.map((pr, i) => {
+                  const group = pr.stack?.groupId;
+                  const members = group ? section.prs.filter((p) => p.stack?.groupId === group).length : 0;
+                  const startsGroup = members > 1 && section.prs[i - 1]?.stack?.groupId !== group;
+                  return (
+                    <Fragment key={pr.id}>
+                      {startsGroup && pr.stack ? (
+                        <div className="muted" style={{ fontSize: 11.5, padding: "6px 2px 3px" }}>
+                          ⛓ Stack · {members} of {pr.stack.groupSize} here, bottom first
+                        </div>
+                      ) : null}
+                      <div style={members > 1 ? { borderLeft: "2px solid var(--border)", paddingLeft: 8 } : undefined}>
+                        <PrRow
+                          pr={pr}
+                          selected={visible[cursor]?.id === pr.id}
+                          onSelect={() => setCursor(visible.findIndex((p) => p.id === pr.id))}
+                          onTriage={triage}
+                          busy={busyId === pr.id}
+                        />
+                      </div>
+                    </Fragment>
+                  );
+                })
               )}
             </Section>
           ),

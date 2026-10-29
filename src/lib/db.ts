@@ -367,9 +367,10 @@ export function pendingNotifications(
     .all(kind, limit) as { id: string; prId: string | null; body: string; via: string | null }[];
 }
 
+/** The open to-do list: anything read is done and drops off. */
 export function listNotifications(limit = 100): AppNotification[] {
   const rows = getDb()
-    .prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?")
+    .prepare("SELECT * FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT ?")
     .all(limit) as NotificationRow[];
   return rows.map(toNotification);
 }

@@ -104,6 +104,50 @@ function Check({
 }
 
 /**
+ * Keeps the raw text while typing: parsing on every keystroke would drop a
+ * half-typed line ("owner/repo" before the "=") and make it impossible to enter.
+ */
+function PathsTextarea({
+  paths,
+  placeholder,
+  onChange,
+}: {
+  paths: PrFilter["paths"];
+  placeholder: string;
+  onChange: (paths: PrFilter["paths"]) => void;
+}) {
+  const [text, setText] = useState(() => paths.map((p) => `${p.repo} = ${p.globs.join(", ")}`).join("\n"));
+
+  return (
+    <textarea
+      className="textarea"
+      style={{ minHeight: 70, fontFamily: "var(--font-mono)", fontSize: 12 }}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(
+          e.target.value
+            .split("\n")
+            .map((line) => {
+              const [repo, globs] = line.split("=");
+              if (!repo?.trim() || !globs?.trim()) return null;
+              return {
+                repo: repo.trim(),
+                globs: globs
+                  .split(",")
+                  .map((g) => g.trim())
+                  .filter(Boolean),
+              };
+            })
+            .filter((p): p is { repo: string; globs: string[] } => p !== null),
+        );
+      }}
+    />
+  );
+}
+
+/**
  * Browser notifications open the PR when clicked; the macOS fallback can't, so
  * this nudges towards granting permission and says plainly what happens if not.
  */
@@ -219,28 +263,10 @@ function FilterEditor({
           label="Paths"
           hint="One per line: owner/repo = glob1, glob2. A bare folder matches everything under it."
         >
-          <textarea
-            className="textarea"
-            style={{ minHeight: 70, fontFamily: "var(--font-mono)", fontSize: 12 }}
-            value={filter.paths.map((p) => `${p.repo} = ${p.globs.join(", ")}`).join("\n")}
+          <PathsTextarea
+            paths={filter.paths}
             placeholder={`${org || "acme"}/platform = apps/web\n${org || "acme"}/web-app = packages/auth/**, src/billing/**`}
-            onChange={(e) => {
-              const paths = e.target.value
-                .split("\n")
-                .map((line) => {
-                  const [repo, globs] = line.split("=");
-                  if (!repo?.trim() || !globs?.trim()) return null;
-                  return {
-                    repo: repo.trim(),
-                    globs: globs
-                      .split(",")
-                      .map((g) => g.trim())
-                      .filter(Boolean),
-                  };
-                })
-                .filter((p): p is { repo: string; globs: string[] } => p !== null);
-              set("paths", paths);
-            }}
+            onChange={(v) => set("paths", v)}
           />
         </Field>
       </div>
