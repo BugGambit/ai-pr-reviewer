@@ -172,6 +172,16 @@ That's it. Your queue fills in on the next refresh.
 
 > **Screenshots (optional).** Run `pnpm setup:screenshots` once to install Playwright's Chromium.
 
+### Dev container
+
+With Docker and the VS Code **Dev Containers** extension installed, open this repository
+and select **Dev Containers: Reopen in Container**. The container includes Node.js 22,
+pnpm, GitHub CLI, and Claude Code, and installs project dependencies automatically.
+
+Inside the container, authenticate with `gh auth login --scopes repo,read:org` and
+launch `claude` to log in. Run `pnpm dev` to start the app; port **4800** is forwarded
+to your machine. Claude's `.claude` directory and GitHub CLI configuration use named volumes.
+
 ## How it works
 
 ```mermaid
