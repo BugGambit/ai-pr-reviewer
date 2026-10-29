@@ -342,7 +342,11 @@ export interface AppConfig {
     gateCheck: string;
   };
   review: {
+    /** Which CLI runs the review. "auto" prefers `claude` and falls back to Cursor's `agent`. */
+    provider: "auto" | "claude" | "cursor";
     model: string;
+    /** Cursor model id (see `agent models`). Effort is part of the id, e.g. `-high`. */
+    cursorModel: string;
     mode: "standard" | "deep";
     maxDiffBytes: number;
     maxBudgetUsd: number;

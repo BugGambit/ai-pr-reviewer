@@ -20,7 +20,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     // found in roughly a quarter of the time. Dropping effort below "high" is
     // what actually costs quality — medium missed a description/code mismatch
     // and stopped producing diagrams — so the effort stays up.
+    provider: "auto",
     model: "sonnet",
+    cursorModel: "claude-sonnet-5-thinking-high",
     mode: "standard",
     maxDiffBytes: 600_000,
     maxBudgetUsd: 3,

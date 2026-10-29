@@ -152,7 +152,11 @@ before/after pairs against the base branch. Routes the AI flagged as affected ar
 
 - Node.js 22+ and [pnpm](https://pnpm.io)
 - [GitHub CLI](https://cli.github.com), authenticated: `gh auth login --scopes repo,read:org`
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), logged in (`claude` on your `PATH`)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), logged in (`claude` on your `PATH`),
+  **or** the [Cursor CLI](https://cursor.com/cli), logged in (`agent login`). With the default
+  *Auto* setting, `claude` is used when present and Cursor's `agent` otherwise; pick a Cursor
+  model in **Settings** (`agent models` lists them). The per-review spend cap and prefetch budget
+  only apply to Claude, since the Cursor CLI reports no cost.
 
 ```bash
 git clone https://github.com/BugGambit/ai-pr-reviewer.git

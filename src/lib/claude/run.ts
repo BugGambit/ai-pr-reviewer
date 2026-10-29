@@ -18,11 +18,85 @@ interface StreamEvent {
   is_error?: boolean;
   total_cost_usd?: number;
   duration_ms?: number;
+  /** Cursor stamps incremental assistant deltas; the closing full message has none. */
+  timestamp_ms?: number;
   event?: {
     type: string;
     delta?: { type?: string; text?: string; partial_json?: string };
   };
   message?: { content?: { type: string; text?: string }[] };
+}
+
+type Provider = "claude" | "cursor";
+
+interface StreamState {
+  streamed: string;
+  finalText: string;
+  costUsd: number | null;
+  durationMs: number | null;
+}
+
+const PROVIDER_LABEL: Record<Provider, string> = { claude: "claude CLI", cursor: "Cursor agent CLI" };
+
+function messageText(event: StreamEvent): string {
+  return (event.message?.content ?? [])
+    .filter((c) => c.type === "text" && c.text)
+    .map((c) => c.text as string)
+    .join("");
+}
+
+/** Applies one stream-json event to the state. Returns an error message if the CLI reported failure. */
+function applyEvent(provider: Provider, event: StreamEvent, state: StreamState): string | null {
+  if (provider === "claude" && event.type === "stream_event" && event.event?.type === "content_block_delta") {
+    const delta = event.event.delta;
+    state.streamed += delta?.text ?? delta?.partial_json ?? "";
+    return null;
+  }
+
+  if (event.type === "assistant") {
+    const text = messageText(event);
+    if (!text) return null;
+    if (provider === "cursor" && event.timestamp_ms !== undefined) state.streamed += text;
+    else state.streamed = text;
+    return null;
+  }
+
+  if (event.type === "result") {
+    if (typeof event.result === "string") state.finalText = event.result;
+    state.costUsd = event.total_cost_usd ?? null;
+    state.durationMs = event.duration_ms ?? null;
+    if (event.is_error) return event.result ?? event.subtype ?? "unknown";
+  }
+  return null;
+}
+
+function extraPathDirs(): string[] {
+  return [path.join(os.homedir(), ".local", "bin")];
+}
+
+function searchPath(): string {
+  return [process.env.PATH ?? "", ...extraPathDirs()].filter(Boolean).join(path.delimiter);
+}
+
+function findOnPath(bin: string): string | null {
+  for (const dir of searchPath().split(path.delimiter)) {
+    const candidate = path.join(dir, bin);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return null;
+}
+
+export function resolveProvider(config: AppConfig): Provider {
+  const configured = config.review.provider ?? "auto";
+  if (configured !== "auto") return configured;
+  if (findOnPath("claude")) return "claude";
+  if (findOnPath(process.env.CURSOR_AGENT_BIN ?? "agent")) return "cursor";
+  return "claude";
 }
 
 /**
@@ -31,18 +105,23 @@ interface StreamEvent {
  * something actionable within seconds instead of staring at a spinner until the
  * whole document lands.
  */
-function runClaudeStreaming(
+function runStreaming(
+  provider: Provider,
   args: string[],
   prompt: string,
   cwd: string,
   timeoutMs: number,
   onPartial: (text: string) => void,
 ): Promise<{ text: string; costUsd: number | null; durationMs: number | null }> {
+  const label = PROVIDER_LABEL[provider];
+  const bin = provider === "cursor" ? (process.env.CURSOR_AGENT_BIN ?? "agent") : "claude";
+
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, {
+    const child = spawn(findOnPath(bin) ?? bin, args, {
       cwd,
       env: {
         ...process.env,
+        PATH: searchPath(),
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         NO_COLOR: "1",
       },
@@ -51,15 +130,12 @@ function runClaudeStreaming(
 
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`claude CLI timed out after ${Math.round(timeoutMs / 1000)}s`));
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
     }, timeoutMs);
 
     let buffer = "";
-    let streamed = "";
-    let finalText = "";
-    let costUsd: number | null = null;
-    let durationMs: number | null = null;
     let stderr = "";
+    const state: StreamState = { streamed: "", finalText: "", costUsd: null, durationMs: null };
 
     const handle = (line: string) => {
       if (!line.trim()) return;
@@ -70,37 +146,14 @@ function runClaudeStreaming(
         return; // non-JSON noise on stdout
       }
 
-      if (event.type === "stream_event" && event.event?.type === "content_block_delta") {
-        const delta = event.event.delta;
-        const chunk = delta?.text ?? delta?.partial_json ?? "";
-        if (chunk) {
-          streamed += chunk;
-          onPartial(streamed);
-        }
+      const before = state.streamed;
+      const error = applyEvent(provider, event, state);
+      if (error) {
+        clearTimeout(timer);
+        reject(new Error(`${label} returned an error: ${error}`));
         return;
       }
-
-      if (event.type === "assistant" && event.message?.content) {
-        const text = event.message.content
-          .filter((c) => c.type === "text" && c.text)
-          .map((c) => c.text as string)
-          .join("");
-        if (text) {
-          streamed = text;
-          onPartial(streamed);
-        }
-        return;
-      }
-
-      if (event.type === "result") {
-        if (typeof event.result === "string") finalText = event.result;
-        costUsd = event.total_cost_usd ?? null;
-        durationMs = event.duration_ms ?? null;
-        if (event.is_error) {
-          clearTimeout(timer);
-          reject(new Error(`Claude returned an error: ${event.result ?? event.subtype ?? "unknown"}`));
-        }
-      }
+      if (state.streamed !== before) onPartial(state.streamed);
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -116,19 +169,19 @@ function runClaudeStreaming(
 
     child.on("error", (err) => {
       clearTimeout(timer);
-      reject(new Error(`claude CLI failed to start: ${err.message}`));
+      reject(new Error(`${label} failed to start: ${err.message}`));
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
       if (buffer.trim()) handle(buffer);
 
-      const text = finalText || streamed;
+      const text = state.finalText || state.streamed;
       if (!text) {
-        reject(new Error(`claude CLI exited ${code} without output: ${stderr.slice(-600)}`));
+        reject(new Error(`${label} exited ${code} without output: ${stderr.slice(-600)}`));
         return;
       }
-      resolve({ text, costUsd, durationMs });
+      resolve({ text, costUsd: state.costUsd, durationMs: state.durationMs });
     });
 
     child.stdin.end(prompt);
@@ -161,6 +214,40 @@ function extractJson(raw: string): unknown {
     }
   }
   throw new Error(`Model did not return JSON. First 400 chars: ${trimmed.slice(0, 400)}`);
+}
+
+/**
+ * The Cursor CLI has no tool allowlist, so containment comes from "ask" mode
+ * (read-only: no edits, no shell) plus a workspace that is either an empty
+ * scratch dir or the PR checkout. MCP servers stay off because they are never
+ * approved in headless runs.
+ */
+function cursorArgs(model: string, checkoutPath: string | undefined, scratch: string): string[] {
+  return [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--stream-partial-output",
+    "--mode",
+    "ask",
+    "--trust",
+    "--model",
+    model,
+    "--workspace",
+    checkoutPath ?? scratch,
+  ];
+}
+
+/** Cursor has no --system-prompt or --json-schema, so both travel in the prompt. */
+function cursorPrompt(prompt: string): string {
+  return [
+    SYSTEM_PROMPT,
+    "",
+    "OUTPUT FORMAT: reply with a single JSON object that conforms to the JSON Schema below. No prose before or after it, no markdown code fences.",
+    JSON.stringify(REVIEW_SCHEMA),
+    "",
+    prompt,
+  ].join("\n");
 }
 
 const VERDICTS = new Set(["approve", "needs_attention", "block"]);
@@ -286,7 +373,8 @@ export async function runReview(
 ): Promise<StoredReview> {
   const id = prId(pr.owner, pr.repo, pr.number);
   const mode = opts.mode ?? config.review.mode;
-  const model = opts.model ?? config.review.model;
+  const provider = resolveProvider(config);
+  const model = opts.model ?? (provider === "cursor" ? config.review.cursorModel : config.review.model);
   const effort = opts.effort ?? config.review.effort;
   const log = opts.onLog ?? (() => {});
   const startedAt = Date.now();
@@ -320,9 +408,9 @@ export async function runReview(
     }
 
     const { prompt } = buildReviewPrompt({ pr, heuristics, deepMode: mode === "deep", checkoutPath });
-    log(`Prompt built (${Math.round(prompt.length / 1024)} KB). Invoking Claude…`);
+    log(`Prompt built (${Math.round(prompt.length / 1024)} KB). Invoking ${PROVIDER_LABEL[provider]} (${model})…`);
 
-    const args = [
+    const args = provider === "cursor" ? cursorArgs(model, mode === "deep" ? checkoutPath : undefined, scratch) : [
       "-p",
       // Streaming so the UI can show the verdict and headline while the rest of
       // the document is still being written.
@@ -351,11 +439,13 @@ export async function runReview(
       "--restricted",
     ];
 
-    if (mode === "deep" && checkoutPath) {
-      // Read-only inspection of the checkout. No Bash, no network, no writes.
-      args.push("--tools", "Read,Grep,Glob", "--add-dir", checkoutPath);
-    } else {
-      args.push("--tools", "");
+    if (provider === "claude") {
+      if (mode === "deep" && checkoutPath) {
+        // Read-only inspection of the checkout. No Bash, no network, no writes.
+        args.push("--tools", "Read,Grep,Glob", "--add-dir", checkoutPath);
+      } else {
+        args.push("--tools", "");
+      }
     }
 
     const timeoutMs = mode === "deep" ? 15 * 60_000 : 8 * 60_000;
@@ -365,7 +455,8 @@ export async function runReview(
     let lastEmit = 0;
     let firstSignalAt: number | null = null;
 
-    const { text, costUsd } = await runClaudeStreaming(args, prompt, scratch, timeoutMs, (partialText) => {
+    const input = provider === "cursor" ? cursorPrompt(prompt) : prompt;
+    const { text, costUsd } = await runStreaming(provider, args, input, scratch, timeoutMs, (partialText) => {
       const now = Date.now();
       if (now - lastEmit < 400) return;
       lastEmit = now;
