@@ -527,9 +527,29 @@ export default function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title="Claude review" subtitle="Reviews are cached per commit, so each PR costs one review unless you re-run it.">
+      <Section title="AI review" subtitle="Reviews are cached per commit, so each PR costs one review unless you re-run it.">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-          <Field label="Model" hint="An alias (opus, sonnet, haiku) or a full model id.">
+          <Field label="CLI" hint="Auto uses claude when it is on PATH, otherwise Cursor's agent.">
+            <select
+              className="select"
+              value={draft.review.provider}
+              onChange={(e) =>
+                update({ review: { ...draft.review, provider: e.target.value as AppConfig["review"]["provider"] } })
+              }
+            >
+              <option value="auto">Auto</option>
+              <option value="claude">Claude Code (claude)</option>
+              <option value="cursor">Cursor CLI (agent)</option>
+            </select>
+          </Field>
+          <Field label="Cursor model" hint="Run `agent models` for ids. Effort is part of the id; spend cap and effort below apply to Claude only.">
+            <input
+              className="input"
+              value={draft.review.cursorModel}
+              onChange={(e) => update({ review: { ...draft.review, cursorModel: e.target.value } })}
+            />
+          </Field>
+          <Field label="Claude model" hint="An alias (opus, sonnet, haiku) or a full model id.">
             <input
               className="input"
               value={draft.review.model}
